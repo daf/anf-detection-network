@@ -22,6 +22,8 @@ from ion.core.messaging.receiver import Receiver
 from ion.util.task_chain import TaskChain
 from ion.util.os_process import OSProcess
 
+from support import TopicWorkerReceiver
+
 import uuid
 import pprint
 
@@ -30,12 +32,6 @@ try:
     NO_MULTIPROCESSING = False
 except:
     NO_MULTIPROCESSING = True
-
-try:
-    import json
-except:
-    import simplejson as json
-
 
 from app_controller_service import SSD_BIN, SSC_BIN, SQLTDEFS_KEY, SSD_READY_STRING
 
@@ -453,46 +449,6 @@ class AppAgent(Process):
 
         elif content['action'] == 'pumps_off':
             self.sqlstreams[ssid]['_fsm'].run_to_state(SSStates.S_DEFINED)
-
-#
-#
-# ########################################################
-#
-#
-
-class TopicWorkerReceiver(Receiver):
-    """
-    A TopicWorkerReceiver is a Receiver from a worker queue that pays attention to its binding_key property. It also turns auto_delete off so consumers can detach without destroying the queues.
-
-    TODO: This should be replaced by appropriate pubsub arch stuff.
-    """
-
-    def __init__(self, *args, **kwargs):
-        """
-        @param binding_key The binding key to use. By default, uses the computed xname, but can take a topic based string with wildcards.
-        """
-        binding_key = kwargs.pop("binding_key", None)
-        Receiver.__init__(self, *args, **kwargs)
-        if binding_key == None:
-            binding_key = self.xname
-
-        self.binding_key = binding_key
-
-    @defer.inlineCallbacks
-    def on_initialize(self, *args, **kwargs):
-        """
-        @retval Deferred
-        """
-        assert self.xname, "Receiver must have a name"
-
-        name_config = messaging.worker(self.xname)
-        #TODO: needs routing_key or it doesn't bind to the binding key - find where that occurs
-        #TODO: auto_delete gets clobbered in Consumer.name by exchange space dict config - rewrite - maybe not possible if exchange is set to auto_delete always
-        name_config.update({'name_type':'worker', 'binding_key':self.binding_key, 'routing_key':self.binding_key, 'auto_delete':False})
-
-        #log.info("CONF IN " + name_config.__str__())
-
-        yield self._init_receiver(name_config, store_config=True)
 
 #
 #

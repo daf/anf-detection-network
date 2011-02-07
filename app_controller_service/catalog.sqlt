@@ -1,0 +1,67 @@
+--- UCSD/OOI POC: define streams of input data.
+--- $$Id: //depot/customers/ucsd/seismic/sql/catalog.sql#4 $$
+-- Aspen dataflow server
+-- Copyright (C) 2009-2010 SQLstream, Inc.
+
+CREATE OR REPLACE SCHEMA UCSD;
+DROP SCHEMA UCSD CASCADE;
+CREATE OR REPLACE SCHEMA UCSD;
+SET SCHEMA 'UCSD';
+SET PATH 'UCSD';
+
+-- load application jar
+CREATE OR REPLACE JAR ucsd.seismic
+    LIBRARY 'file:plugin/ucsd-seismic.jar'
+    OPTIONS(0);
+
+-- load AMQP adapter
+CREATE OR REPLACE FOREIGN DATA WRAPPER "AmqpWrapper"
+    LIBRARY 'class com.sqlstream.plugin.amqp.AmqpAdapter'
+    LANGUAGE JAVA;
+
+-- declare AMQP data server
+CREATE OR REPLACE SERVER "AMQPServer"
+    FOREIGN DATA WRAPPER "AmqpWrapper"
+    OPTIONS (
+        HOST '${server_host}', VHOST '${server_vhost}', PORT '${server_port}',
+        USERNAME '${server_user}', PASSWORD '${server_password}'
+    );
+
+-- subscribe to raw signal messages, as a stream
+CREATE FOREIGN STREAM "RawSignalMessages" (
+       header varchar(256),
+       body   varbinary(2048))
+    SERVER "AMQPServer"
+    OPTIONS (EXCHANGE '${inp_exchange}',
+             EXCHANGE_TYPE '${inp_exchange_type}',
+             EXCHANGE_DURABLE '${inp_exchange_durable}',
+             EXCHANGE_AUTO_DELETE '${inp_exchange_autodelete}',
+             EXCHANGE_PASSIVE 'true',
+             QUEUE '${inp_queue}',
+             QUEUE_DURABLE '${inp_queue_durable}',
+             QUEUE_AUTO_DELETE '${inp_queue_autodelete}',
+             QUEUE_EXCLUSIVE 'false',
+             QUEUE_PASSIVE 'true',
+             TYPE 'READER');
+
+
+-- Decode messages, yielding a stream of raw signal data.
+-- One wide stream for all data sources.
+-- Each row is a single signal sample: time, value, the id of the source.
+-- All rows from the same message have the same rowtime.
+-- Raw signal value is dimensionless. Signal time is epoch msecs
+-- (same as fennel timestamp, but supports arithmetic).
+CREATE FUNCTION decode(msgstream cursor)
+    RETURNS TABLE(
+        pktid int,
+        sourcename varchar(16),
+        t bigint,
+        "rawSignal" integer
+    )
+    LANGUAGE java PARAMETER STYLE SYSTEM DEFINED java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.cust.ucsd.RawSignalDecoder.decodeDecimal';
+
+CREATE VIEW "RawSignals" AS
+    SELECT STREAM * FROM TABLE(
+        decode(
+            CURSOR(SELECT STREAM * FROM "RawSignalMessages")));

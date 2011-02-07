@@ -1,0 +1,235 @@
+--- UCSD/OOI POC: define some function useful for streams of time-series data,
+-- TODO: move these functions to cust/common or to aspen SDK.
+--- $$Id: //depot/customers/ucsd/seismic/sql/funcs.sql#3 $$
+-- Aspen dataflow server
+-- Copyright (C) 2009-2010 SQLstream, Inc.
+
+SET SCHEMA 'UCSD';
+SET PATH 'UCSD';
+
+-- MISC FUNCTIONS:
+CREATE OR REPLACE FUNCTION odd(n int) RETURNS boolean CONTAINS SQL
+    RETURN (mod(n, 2) = 1);
+
+-- like the C conditional expression (cond? x : y)
+CREATE OR REPLACE FUNCTION mash(cond boolean, x double, y double)
+    RETURNS double CONTAINS SQL
+    RETURN CASE
+      WHEN cond THEN x
+      ELSE y
+    END;
+
+-- PARTITIONED STREAMING AGG:
+-- This UDX is a preprocessor for the unimplemented feature, which might be
+-- expressed as "GROUP BY g PARTITION BY p", meaning to collect groups (of same
+-- g value) in an independent sequence for each partition (of same p value). The
+-- UDX buffers its input stream and emits each completed partitioned group en
+-- bloc, all labeled with a "groupID" assigned sequentially. The output stream
+-- can be processed by an ordinary GROUP BY groupID, which can apply any desired
+-- aggregations.
+--
+-- The group ID is the 1st output column (after rowtime).
+-- Then comes the real partition key, the real group key, and any other
+-- requested columns. The partition-by column, the group-by column, and the
+-- other columns are all columns in the input cursor, and are specified as
+-- column-set expressions [row(col, col, ...)].
+--
+-- For now, allows only a single partition column and a single group-by column,
+-- and assumes the input is independently monotonic in the group-by column, as
+-- restricted to each partition.
+
+CREATE OR REPLACE FUNCTION collectPartitionedGroups(
+        c cursor,
+        partnBy select from c,
+        groupBy select from c,
+        others  select from c)
+    RETURNS TABLE(groupID int, partnBy.*, groupBy.*, others.*)
+    LANGUAGE java PARAMETER STYLE SYSTEM DEFINED JAVA
+    NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.PartitionedGroups.collect';
+
+
+-- LATCHES:
+--
+-- A simple latch utility: provides any number of named latches, restricted to
+-- the scope of a single query. Each latch saves a separate value in each
+-- partition. This function always returns the current saved value of the latch
+-- (for the partition). Optionally, when the flag SAVE is true, it first saves the
+-- passed value in the latch.
+CREATE OR REPLACE FUNCTION latch(
+      name varchar(64), partn varchar(64), val double, save boolean)
+    RETURNS double
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.Latches.simpleLatch';
+
+-- a simple latch with a boolean value:
+CREATE OR REPLACE FUNCTION boolLatch(
+      name varchar(64), partn varchar(64), val boolean, save boolean)
+    RETURNS boolean
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.Latches.simpleBoolLatch';
+
+-- convenience routine to get the latch without setting it:
+CREATE OR REPLACE FUNCTION getLatch(name varchar(64), partn varchar(64))
+    RETURNS double CONTAINS SQL
+    RETURN latch(name, partn, 0, false);
+CREATE OR REPLACE FUNCTION getBoolLatch(name varchar(64), partn varchar(64))
+    RETURNS boolean CONTAINS SQL
+    RETURN (boolLatch(name, partn, false, false));
+
+-- A latch utility for partitioned time series data: tracks the variation of
+-- an expression arg WATCHED, and on each local maximum (in a partition),
+-- saves the current value of a second expression SAVED. Each call provides
+-- new values of WATCHED and SAVED, and possibly changes SAVED. Tracks a
+-- separate state for each value of the pair (NAME, PARTN)
+--
+-- Returns the value of SAVED that accompanied the most recent local maximum of
+-- WATCHED for the partition identified by KEY.
+CREATE OR REPLACE FUNCTION latchLocalMax(
+        name varchar(64), partn varchar(64), watched double, saved double)
+    RETURNS double
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.Latches.latchLocalMax';
+
+
+-- EVENTS:
+-- An event is identified by a tag and has a separate state for each partition,
+-- as specified by the value of a partition key.
+-- This state comprises: 
+--   a flag that is true sporadically, only for a row that triggers the event;
+--   a count of events triggered, initially 0;
+--   any number of event variables, which can save a long value associated to
+--     the event (see eventSetVar).
+-- The event is triggered only when the given condition becomes true after being false.
+
+-- Defines a new event: and watches the given condition, keeping a separate
+-- state for each value of the partition key. Called on each row in a stream,
+-- returns true on each trigger row, false on all other rows.
+CREATE OR REPLACE FUNCTION eventMark(name varchar(16), partkey varchar(16), cond boolean)
+    RETURNS boolean
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventMark';
+
+-- returns true only for a row which triggers the event (in this partition):
+CREATE OR REPLACE FUNCTION eventTriggered(eventname varchar(16), partkey varchar(16))
+    RETURNS boolean
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventTriggered';
+
+-- returns the number of times an event has triggered so far (per partition):
+CREATE OR REPLACE FUNCTION eventCount(eventname varchar(16), partkey varchar(16))
+    RETURNS int
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventCount';
+                                    
+-- EPISODES:
+-- Given two series of events, form pairs of instances of events.
+-- Each pair defines the start and stop bounds of an stream interval:
+-- we call this an "episode bounded by the events".
+-- The function returns 0 before the first episode, then 1 during the first
+-- episode, then 2 after the first episode, then 3 during the 2nd episode, and
+-- so on: ie 2*n-1 during the nth episode, 2*n afterwards until episode n+1
+-- (where the count starts at 1).
+--
+-- The returned value is thus monotonic, and if added to rows as a label column,
+-- grouping can collect the episodes and the gaps between. The same partition
+-- key applied to both event series.
+--
+-- In the simplest case, a start event is followed in row sequence by a stop
+-- event, a simple pair. If the start event is followed by more start events, we
+-- could choose any one to pair with the next stop event. Two cases seem useful:
+-- the first, for the widest (longest) episode; the last, for the narrowest. The
+-- caller chooses.
+CREATE OR REPLACE FUNCTION episodeIndex(
+       startEventName varchar(16), stopEventName varchar(16),
+        partkey varchar(16), wide boolean)
+    RETURNS int
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.episodeIndex';
+
+-- EVENT VARIABLES:
+--
+-- An event variable saves the value of some expression. Typically a variable is
+-- set once for each event (on the trigger row), and is saved until the next
+-- event sets a new value. The value can be used in other calculated
+-- expressions, in particular as part of the condition defining another event.
+-- A variable is identified by a name, and saves a separate value for each partition. 
+
+-- Defines an event variable that saves an integer value. The value is changed
+-- only by a trigger row of the given event and partition. The function is
+-- called on every input row, and returns the latest saved value (after changing
+-- the value on a trigger row).
+CREATE OR REPLACE FUNCTION eventSetIntVar(
+       varname varchar(16), val int, eventname varchar(16), partkey varchar(16))
+    RETURNS int
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventSetIntVar';
+
+-- Similar functions that define event variables of other SQL datatypes:
+CREATE OR REPLACE FUNCTION eventSetBigVar(
+       varname varchar(16), val bigint, eventname varchar(16), partkey varchar(16))
+    RETURNS bigint
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventSetBigVar';
+CREATE OR REPLACE FUNCTION eventSetDblVar(
+       varname varchar(16), val double, eventname varchar(16), partkey varchar(16))
+    RETURNS double
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventSetDblVar';
+CREATE OR REPLACE FUNCTION eventSetBoolVar(
+       varname varchar(16), val boolean, eventname varchar(16), partkey varchar(16))
+    RETURNS boolean
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventSetBoolVar';
+
+
+-- Like eventSetIntVar() etc, but with a conditional delay, Sets VARNAME to VAL
+-- for the partition PARTKEY of event EVENTNAME, but only the first time COND is
+-- true for the event (ie on or after each trigger row). Like eventSetIntVar(),
+-- returns the latest saved value.
+CREATE OR REPLACE FUNCTION eventSetIntVarWhen(
+       varname varchar(16), val int, cond boolean,
+       eventname varchar(16), partkey varchar(16))
+    RETURNS int
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventSetIntVarWhen';
+CREATE OR REPLACE FUNCTION eventSetBigVarWhen(
+       varname varchar(16), val bigint, cond boolean,
+       eventname varchar(16), partkey varchar(16))
+    RETURNS bigint
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventSetBigVarWhen';
+CREATE OR REPLACE FUNCTION eventSetDblVarWhen(
+       varname varchar(16), val double, cond boolean,
+       eventname varchar(16), partkey varchar(16))
+    RETURNS double
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventSetDblVarWhen';
+CREATE OR REPLACE FUNCTION eventSetBoolVarWhen(
+       varname varchar(16), val boolean, cond boolean,
+       eventname varchar(16), partkey varchar(16))
+    RETURNS boolean
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventSetBoolVarWhen';
+
+-- Returns the stored value of an event variable
+CREATE OR REPLACE FUNCTION eventGetIntVar(
+       varname varchar(16), eventname varchar(16), partkey varchar(16))
+    RETURNS int
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventGetIntVar';
+CREATE OR REPLACE FUNCTION eventGetBigVar(
+       varname varchar(16), eventname varchar(16), partkey varchar(16))
+    RETURNS bigint
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventGetBigVar';
+CREATE OR REPLACE FUNCTION eventGetDblVar(
+       varname varchar(16), eventname varchar(16), partkey varchar(16))
+    RETURNS double
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventGetDblVar';
+CREATE OR REPLACE FUNCTION eventGetBoolVar(
+       varname varchar(16), eventname varchar(16), partkey varchar(16))
+    RETURNS boolean
+    LANGUAGE java NO SQL
+    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.tools.StreamEventMgr.eventGetBoolVar';

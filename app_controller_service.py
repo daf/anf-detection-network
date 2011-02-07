@@ -27,6 +27,8 @@ from ion.services.cei.epu_reconfigure import EPUControllerClient
 from ion.util.task_chain import TaskChain
 from ion.util.os_process import OSProcess
 
+from support import TopicWorkerReceiver
+
 import uuid
 import pprint
 

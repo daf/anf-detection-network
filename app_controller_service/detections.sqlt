@@ -1,0 +1,296 @@
+--- UCSD/OOI POC:  define event detection calculations in sql.
+--- $$Id: //depot/customers/ucsd/seismic/sql/detections.sql#7 $$
+-- Detection algorithm from sql/old/t3.sql, modified per Juan Reyes, 5/20/10, 
+-- to suit the event http://anf.ucsd.edu/spevents/2009/319/a
+-- Aspen dataflow server
+-- Copyright (C) 2009-2010 SQLstream, Inc.
+
+SET SCHEMA 'UCSD';
+SET PATH 'UCSD';
+
+-- CALCULATIONS --
+-- (As a chain of views, only for clearer exposition).
+
+-- SIGNAL FILTER:
+-- (1) Gets filter ID and detection params from the config file for this
+--   channel. (Appends the filter name to the sourcename)
+-- (2) Applies selected filter to signal value. 
+-- This UDX should call a filter from standard library code: for now it's a dummy.
+-- CREATE FUNCTION "filterSignal"(c cursor)
+--    RETURNS TABLE(
+--        c.*,
+--        signal double,
+--        "threshOn"  double,
+--        "threshOff" double)
+--    LANGUAGE java PARAMETER STYLE SYSTEM DEFINED java NO SQL
+--    EXTERNAL NAME 'ucsd.seismic:com.sqlstream.cust.ucsd.FilterEngine.invoke';
+--
+--  SELECT STREAM * FROM TABLE(
+--      "filterSignal"(
+--          CURSOR(SELECT STREAM * FROM "RawSignals")));
+
+-- Since filterSignal() is a dummy that repeats it output,
+-- avoid calling it, but add the thresholds:
+CREATE VIEW "FilteredSignals" AS
+    SELECT STREAM *,
+      CAST("rawSignal" as double) as signal,
+      5.0 as "threshOn",
+      2.5 as "threshOff"
+    FROM "RawSignals";
+
+-- Calculate running averages of signal power on all source channels at once.
+-- Each source channel is  a SQL partition.
+-- The window definitions below assume 40 samples/second.
+-- Thus STA over 1 sec is AVG over last 40 rows (samples).
+CREATE OR REPLACE VIEW "SignalsWithAvgs" AS
+     SELECT STREAM *,
+        AVG(signal * signal) OVER shortwindow AS STA,
+        AVG(signal * signal) OVER longwindow  AS LTA,
+        AVG(signal * signal) OVER midwindow   AS LTA2
+     FROM "FilteredSignals"
+     WINDOW 
+       shortwindow AS (PARTITION BY sourcename ROWS  40 PRECEDING),
+       midwindow   AS (PARTITION BY sourcename ROWS 200 PRECEDING),
+       longwindow  AS (PARTITION BY sourcename ROWS 400 PRECEDING);
+
+-- Define ratio r1 = |STA/LTA| and event tOn when r1 > threshON; save LTA(tOn).
+-- Define ratios r1a as |STA/LTA(tOn)| and r2 as |STA/LTA2|.
+-- Variable ACTIVE is initially false, true after an ON event, false after an OFF event.
+-- Field threshOnTrigger is true only for the row at tOn.
+CREATE OR REPLACE VIEW "SignalsWithRatios" AS
+     SELECT STREAM *,
+        STA / ("LTA_at_tOn" + 0.001) AS r1a,
+        STA / ("LTA2" + 0.001) AS r2
+     FROM (
+       SELECT STREAM *,
+         boolLatch('active', sourcename, true,
+             eventTriggered('on', sourcename)) as active,
+         eventSetBigVar('t', t, 'on', sourcename) AS "tOn",
+         eventSetDblVar('LTA', LTA, 'on', sourcename) AS "LTA_at_tOn"
+       FROM (
+         SELECT STREAM *, 
+           eventMark('on', sourcename,
+               ((r1 > "threshOn") AND NOT getBoolLatch('active', sourcename)))
+             AS "threshOnTrigger"
+         FROM (
+           SELECT STREAM *, 
+             STA / (LTA + 0.001) AS r1
+           FROM "SignalsWithAvgs")));
+
+-- Define event tOff when r1a < threshOff (with conditions on t).
+-- Field threshOnTrigger is true only for the row at tOff.
+-- Find matching pairs {tOn, tOff} that define detection intervals.
+-- (detectionIndex is odd during each interval (1, 3, 5, ...))
+CREATE OR REPLACE VIEW "SignalsWithIntervals" AS
+   SELECT STREAM *,
+     boolLatch('active', sourcename, false,
+         eventTriggered('off', sourcename)) as active2,
+     episodeIndex('on', 'off', sourcename, true) AS "detectionIndex",
+     eventSetBigVar('t', t, 'off', sourcename) AS "tOff"
+   FROM (
+     SELECT STREAM *,
+       eventMark('off', sourcename, 
+           ((t - "tOn" > 600000) OR
+            (r1a < "threshOff") AND ((t - "tOn" < 2000) OR (t - "tOn" > 20000))))
+           AS "threshOffTrigger"
+     FROM "SignalsWithRatios");
+
+-- Define event tD as first local max of r2 after tOn.
+-- Track peaks (local maxima) of r2, mark each row with the time of the latest
+-- preceding peak (tPeak). In each detection interal, then tD = 1st tPeak > tOn,
+-- during the interval. That is tD = FIRST_VALUE(tPeak) over the interval,
+-- provided we null out earlier values.
+CREATE OR REPLACE VIEW "SignalsWithDetections" AS
+   SELECT STREAM *, 
+       mash(("tPeak" > "tOn") AND odd("detectionIndex"),
+             "tPeak", CAST(null AS double)) AS "tD"
+   FROM (
+       SELECT STREAM *,
+         latchLocalMax('tPeak', sourcename, r2, t) AS "tPeak"
+       FROM "SignalsWithIntervals");
+
+
+-- The next stage of the calculations will collect the significant events
+-- from SignalsWithDetections. However, in order to visualize the algorithm,
+-- we tee off the data here: a second query pulls SignalsWithDetections
+-- so we can plot it, and save it for post hoc analysis.
+--
+-- Hence the view SignalsWithDetections is part of two simultaneous queries: to
+-- avoid computing it twice, we make it a stream. That is, we define a stream
+-- SignalsWithCalculations which is almost identical to the view
+-- SignalsWithDetections, and we create a pump which computes the view and
+-- publishes the output as the stream.
+--
+-- NOTE: suppress r1a and r2 outside detection intervals (set them to r1).
+--
+-- NOTE: must pass forward the dummy fields "active" and "active2", or else
+-- the calls to boolLatch() may be deleted by the query optimizer.
+
+CREATE OR REPLACE STREAM "SignalsWithCalculations" (
+        pktid int, sourcename varchar(16),
+        t bigint, "rawSignal" integer, signal double, 
+        STA double, LTA double, LTA2 double, 
+        "threshOn"  double, "threshOff" double,
+        r1 double, r1a double, r2 double,
+        "threshOnTrigger" boolean, "threshOffTrigger" boolean, 
+        active boolean, active2 boolean, "detectionIndex" int,
+        "LTA_at_tOn" double, "tPeak" double,
+        "tOn" bigint, "tD" bigint, "tOff" bigint
+);
+
+CREATE OR REPLACE PUMP "SignalsPump" STOPPED AS
+  INSERT INTO "SignalsWithCalculations" (
+          pktid, sourcename, 
+          t, "rawSignal",
+          signal, STA, LTA, LTA2,
+          "threshOn", "threshOff", 
+          r1, r1a, r2,
+          "threshOnTrigger", "threshOffTrigger",
+          active, active2, "detectionIndex",
+          "LTA_at_tOn", "tPeak", "tOn", "tD", "tOff" )
+  SELECT STREAM
+          pktid, sourcename,
+          t, "rawSignal",
+          signal, STA, LTA, LTA2,
+          "threshOn", "threshOff",
+          r1,
+          mash(odd("detectionIndex"), r1a, CAST(null as double)),
+          mash(odd("detectionIndex"), r2,  CAST(null as double)),
+          "threshOnTrigger", "threshOffTrigger", 
+          active, active2, "detectionIndex",
+          "LTA_at_tOn", "tPeak", "tOn", "tD", "tOff"
+  FROM "SignalsWithDetections";
+
+
+-- DETECTIONS: 
+--
+-- Collect the rows of an interval, reducing them to one output row, by grouping
+-- rows with the same detectionIndex. We take tOn from the first row, tOff from
+-- the last row, and tD from the first peak row. We have contrived that tD is
+-- null in each of the rows in the group before this peak, so FIRST_VALUE() is
+-- the first non-null value.
+--
+-- As that detectionIndex is odd during detection intervals; we discard the
+-- "between episode" groups with even detectionIndex.
+--
+-- Note that detectionIndex is intrinsically non-decreasing in the stream for a
+-- given value of SOURCENAME. Thus we can output a detection event as soon as we
+-- have seen the last row from an interval (with a given detectionIndex).
+-- This is "partitioned streaming aggregation".
+-- However, as this is an unfinished feature in sqlstream, comment this out,
+-- and follow by a work-around:
+
+-- CREATE OR REPLACE VIEW D2 as
+--    SELECT STREAM
+--        sourcename, "detectionIndex",
+--        FIRST_VALUE(s."tOn") AS "tOn",
+--        FIRST_VALUE(s."tD")  AS "tD",
+--        LAST_VALUE(s."tOff") AS "tOff"
+--    FROM "SignalsWithCalculations" s
+--    GROUP BY "detectionIndex" PARTITION BY sourcename;
+
+-- Work-around: 
+-- This UDX collects the partitioned groups. It saves rows, assigning them to
+-- appropriate group, and when a group is complete, it emits it all. As it is
+-- output, each group is labeled with a sequence ID. Thus we can GROUP BY this
+-- ID, and apply the desired aggregation functions.
+--
+-- Sourcename and detectionIndex are unique in a group, but that was not
+-- declared, so we apply a redundant FIRST_VALUE().
+
+CREATE OR REPLACE VIEW D2 as
+   SELECT STREAM
+       MONOTONIC(v.groupID) AS groupID,
+       FIRST_VALUE(v.sourcename) AS sourcename,
+       FIRST_VALUE(v."detectionIndex") AS "detectionIndex",
+       FIRST_VALUE(v."tOn") AS "tOn",
+       FIRST_VALUE(v."tD")  AS "tD",
+       LAST_VALUE(v."tOff") AS "tOff"
+   FROM (
+       SELECT STREAM * FROM TABLE(
+           collectPartitionedGroups(
+               CURSOR(SELECT STREAM * FROM "SignalsWithCalculations"),
+               ROW(sourcename),         -- partition by
+               ROW("detectionIndex"),   -- group by
+               ROW(t, "tOn", "tD", "tOff") -- other projected cols
+       ))) v
+   GROUP BY MONOTONIC(v.groupID);
+
+-- this predicate selects an interval that contains a detection:
+CREATE OR REPLACE FUNCTION detected(detectIndex int, tOn bigint, tD bigint, tOff bigint) 
+    RETURNS boolean CONTAINS SQL 
+    RETURN (odd(detectIndex) 
+      AND (tOn <= tD) AND (tD < tOff)
+      AND (tOff - tOn >= 2000));
+
+-- Take the last row from each window (the only row with a valid tOFF);
+-- skip the gaps (detectionIndex is even) and the intervals that are too short:
+-- (Materialize as a stream, to avoid triplicate aggregation in view Detection3
+-- below).
+CREATE OR REPLACE STREAM "Detections"   -- same rowtype as D2
+    (groupID int, sourcename varchar(16), "detectionIndex" int,
+     "tOn" bigint, "tD" bigint, "tOff" bigint);
+   
+CREATE OR REPLACE PUMP "DetectionsPump" STOPPED AS
+    INSERT INTO "Detections"
+    SELECT STREAM * FROM D2 
+    WHERE detected("detectionIndex", "tOn", "tD", "tOff");
+
+-- Same results, but each detection as three rows.
+CREATE VIEW "Detections3" AS
+   SELECT STREAM 
+       groupID, sourcename, "detectionIndex", "tOn" AS t, 'ON' as tag 
+   FROM "Detections"
+   UNION ALL SELECT STREAM
+        groupID, sourcename, "detectionIndex", "tD" AS t, 'D' as tag 
+   FROM "Detections"
+   UNION ALL SELECT STREAM
+        groupID, sourcename, "detectionIndex", "tOff" AS t, 'OFF' as tag 
+   FROM "Detections";
+
+-- Publish Detections3 on the message bus:
+CREATE FOREIGN STREAM "DetectionMessages" (
+      groupID int,
+      sourcename varchar(16),
+      "detectionIndex" int,
+      t bigint,
+      tag varchar(3)
+  )
+  SERVER "AMQPServer"
+  OPTIONS (EXCHANGE '${det_exchange}',
+           EXCHANGE_AUTO_DELETE '${det_exchange_autodelete}',
+           EXCHANGE_TYPE '${det_exchange_type}',
+           EXCHANGE_DURABLE '${det_exchange_durable}',
+           EXCHANGE_PASSIVE 'false',
+           TOPIC '${det_topic}',
+           TYPE 'WRITER');
+
+CREATE OR REPLACE PUMP "DetectionMessagesPump" STOPPED AS
+  INSERT INTO "DetectionMessages" 
+      (groupID, sourcename, "detectionIndex", t, tag)
+  SELECT STREAM
+       groupID, sourcename, "detectionIndex", t, tag
+  FROM "Detections3";
+
+
+-- returns a D only when both conditions are true
+CREATE OR REPLACE FUNCTION detectCode(triggered boolean, detected boolean)
+    RETURNS CHAR(1) CONTAINS SQL
+    RETURN CASE
+        WHEN (triggered AND detected) THEN 'D'
+        ELSE ' '
+    END;
+
+-- this view is plotted, in order to visualize the detection calculations:
+CREATE OR REPLACE VIEW "PlotSignals" AS
+    SELECT STREAM 
+         sourcename, pktID, t, signal, 
+         sta, lta, "LTA_at_tOn", lta2,
+         r1, r1a, r2, "threshOn", "threshOff",
+         "threshOnTrigger", "threshOffTrigger", active, active2,
+         "tOn", "tD", "tOff", "tPeak",
+         "detectionIndex", 
+         detectCode(
+             "threshOffTrigger",
+             detected("detectionIndex", "tOn", "tD", "tOff"))
+    FROM "SignalsWithCalculations";
