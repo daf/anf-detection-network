@@ -59,15 +59,6 @@ class AppControllerService(ServiceProcess):
         self.routing = {}   # mapping of queues to a list of bindings (station ids/sensor ids)
         self.workers = {}   # mapping of known worker vms to info about those vms (cores / running instances)
 
-        # get connection details to broker
-        cnfgsrc = self.container.exchange_manager.exchange_space.message_space.connection
-
-        broker_config = { 'server_host'     : cnfgsrc.hostname,
-                          'server_port'     : cnfgsrc.port,
-                          'server_user'     : cnfgsrc.userid,
-                          'server_password' : cnfgsrc.password,
-                          'server_vhost'    : cnfgsrc.virtual_host }
-
         # get configs for current exchange setup from exchange space, queues as per what TopicWorkerReceiver (below) uses
         exchcnfg = self.container.exchange_manager.exchange_space.exchange
         msgcnfg = messaging.worker('temp')
@@ -84,8 +75,6 @@ class AppControllerService(ServiceProcess):
                                            'det_exchange_type'      : exchcnfg.exchange_type,
                                            'det_exchange_durable'   : exchcnfg.durable,
                                            'det_exchange_autodelete': exchcnfg.auto_delete } }
-
-        self.prov_vars['sqlt_vars'].update(broker_config)
 
     @defer.inlineCallbacks
     def slc_init(self):

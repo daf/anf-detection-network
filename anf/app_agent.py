@@ -229,9 +229,20 @@ class AppAgent(Process):
         """
         assert self.spawn_args.has_key('agent_args') and self.spawn_args['agent_args'].has_key('sqlt_vars'), "Required SQL substitution vars have not been set yet or no 'agent_args' key present in spawnargs to this AppAgent."
 
-        conf = self.spawn_args['agent_args']['sqlt_vars'].copy()
-        conf.update(uconf)
-        conf.update(kwargs)
+        spawn_conf = self.spawn_args['agent_args']['sqlt_vars'].copy()
+
+        # get connection details to broker
+        cnfgsrc = self.container.exchange_manager.exchange_space.message_space.connection
+
+        conf = { 'server_host'     : cnfgsrc.hostname,
+                 'server_port'     : cnfgsrc.port,
+                 'server_user'     : cnfgsrc.userid,
+                 'server_password' : cnfgsrc.password,
+                 'server_vhost'    : cnfgsrc.virtual_host }
+
+        conf.update(spawn_conf)     # update basic connection info with items from spawn_args to this AppAgent
+        conf.update(uconf)          # update config with arguments passed in via uconf param
+        conf.update(kwargs)         # update config with any additional keyword args
 
         defs = sqldefs
         if defs == None:
