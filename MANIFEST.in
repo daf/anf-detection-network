@@ -1,0 +1,2 @@
+recursive-include anf *
+include README.txt requirements.txt LICENSE.txt Doxyfile
