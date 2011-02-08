@@ -227,7 +227,7 @@ class AppAgent(Process):
         Returns a fully substituted SQLStream SQL definition string.
         Using keyword arguments, you can update the default params passed in to spawn args.
         """
-        assert self.spawn_args['agent_args'].has_key('sqlt_vars'), "Required SQL substitution vars have not been set yet."
+        assert self.spawn_args.has_key('agent_args') and self.spawn_args['agent_args'].has_key('sqlt_vars'), "Required SQL substitution vars have not been set yet or no 'agent_args' key present in spawnargs to this AppAgent."
 
         conf = self.spawn_args['agent_args']['sqlt_vars'].copy()
         conf.update(uconf)

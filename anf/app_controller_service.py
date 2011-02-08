@@ -274,9 +274,9 @@ class AppControllerService(ServiceProcess):
 
             # merge and write individual worker configs while we're at it
             for (wid, winfo) in self.workers.items():
-                wdict = { 'opunit_id' : wid,
-                          'sqlstreams': str(conf['unique_instances'][wid]['sqlstreams']),   # TODO: unstringify this
-                          'sqlt_vars' : self.prov_vars['sqlt_vars'] }
+                wdict = { 'agent_args': { 'opunit_id' : wid,
+                                          'sqlstreams': str(conf['unique_instances'][wid]['sqlstreams']),   # TODO: unstringify this
+                                          'sqlt_vars' : self.prov_vars['sqlt_vars'] } }
 
                 f = open('/tmp/sa-' + wid + '.json', 'w')
                 json.dump(wdict, f, indent=1)
