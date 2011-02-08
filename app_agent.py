@@ -600,36 +600,4 @@ class OSSSServerProcess(OSProcess):
 
         OSProcess.processEnded(self, reason)
 
-#
-#
-# ########################################################
-#
-#
-
-class DetectionConsumer(TopicWorkerReceiver):
-    """
-    Sample detection message consumer, mainly used for testing.
-    """
-    @defer.inlineCallbacks
-    def on_initialize(self, *args, **kwargs):
-        yield TopicWorkerReceiver.on_initialize(self, *args, **kwargs)
-
-        self._detections = []
-        self.add_handler(self.on_detection)
-
-    def on_detection(self, content, msg):
-        msg.ack()
-        log.info("Detection:\n %s" % str(content))
-
-        lines = content.split("\n")
-        detdata = {}
-        for s in lines:
-            if len(s.strip()) == 0:
-                continue
-
-            (k, v) = s.split(":", 1)
-            detdata[k] = v
-
-        self._detections.append(detdata)
-
 
