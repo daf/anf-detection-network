@@ -6,42 +6,28 @@
 @brief Application Controller for load balancing
 """
 
-import os, string, tempfile, shutil
+import os, uuid
+from twisted.internet import defer
+from pkg_resources import resource_stream
+
+try:
+    import json
+except:
+    import simplejson as json
 
 from ion.core import ioninit
 
 import ion.util.ionlog
 log = ion.util.ionlog.getLogger(__name__)
 
-from twisted.internet import defer, reactor, protocol
-
-from ion.core.process.process import ProcessFactory, Process
-from ion.util.async_fsm import AsyncFSM
-from ion.util.state_object import BasicStates
-from ion.core.process.service_process import ServiceProcess, ServiceClient
+from ion.core.process.process import ProcessFactory
+from ion.core.process.service_process import ServiceProcess
 from ion.services.coi.attributestore import AttributeStoreClient
 from ion.core.messaging import messaging
-from ion.core.messaging.receiver import Receiver
 from ion.services.cei.epucontroller import PROVISIONER_VARS_KEY
 from ion.services.cei.epu_reconfigure import EPUControllerClient
-from ion.util.task_chain import TaskChain
-from ion.util.os_process import OSProcess
 
 from support import TopicWorkerReceiver
-
-import uuid
-import pprint
-
-try:
-    import multiprocessing  # python 2.6 only
-    NO_MULTIPROCESSING = False
-except:
-    NO_MULTIPROCESSING = True
-
-try:
-    import json
-except:
-    import simplejson as json
 
 CONF = ioninit.config(__name__)
 INP_EXCHANGE_NAME   = CONF.getValue('INP_EXCHANGE_NAME', 'magnet.topic')
@@ -376,7 +362,8 @@ class AppControllerService(ServiceProcess):
         """
         fulltemplatelist = []
         for filename in ["catalog.sqlt", "funcs.sqlt", "detections.sqlt"]:
-            f = open(os.path.join(os.path.dirname(__file__), "app_controller_service", filename), "r")
+            f = resource_stream(__name__, "data/%s" % filename)
+            #f = open(os.path.join(os.path.dirname(__file__), "app_controller_service", filename), "r")
             fulltemplatelist.extend(f.readlines())
             f.close()
 

@@ -6,7 +6,14 @@
 @brief Application Agent to listen to requests from the Application Controller.
 """
 
-import os, string, tempfile, shutil
+import os, string, tempfile, shutil, uuid
+from pkg_resources import resource_filename
+
+try:
+    import multiprocessing  # python 2.6 only
+    NO_MULTIPROCESSING = False
+except:
+    NO_MULTIPROCESSING = True
 
 import ion.util.ionlog
 log = ion.util.ionlog.getLogger(__name__)
@@ -17,21 +24,8 @@ from ion.core.process.process import Process
 from ion.util.async_fsm import AsyncFSM
 from ion.util.state_object import BasicStates
 from ion.services.coi.attributestore import AttributeStoreClient
-from ion.core.messaging import messaging
-from ion.core.messaging.receiver import Receiver
 from ion.util.task_chain import TaskChain
 from ion.util.os_process import OSProcess
-
-from support import TopicWorkerReceiver
-
-import uuid
-import pprint
-
-try:
-    import multiprocessing  # python 2.6 only
-    NO_MULTIPROCESSING = False
-except:
-    NO_MULTIPROCESSING = True
 
 from app_controller_service import SSD_BIN, SSC_BIN, SQLTDEFS_KEY, SSD_READY_STRING
 
@@ -77,7 +71,8 @@ class SSFSMFactory(object):
         sdpport     = target.sqlstreams[ssid]['sdpport']
         hsqldbport  = target.sqlstreams[ssid]['hsqldbport']
         dirname     = target.sqlstreams[ssid]['dirname']
-        installerbin= os.path.join(os.path.dirname(__file__), "app_controller_service", "install_sqlstream.sh")
+        installerbin= resource_filename(__name__, "data/install_sqlstream.sh")
+        log.debug(installerbin)
 
         # 1. INIT <-> INSTALLED
         proc_installer  = OSProcess(binary=installerbin, spawnargs=[sdpport, hsqldbport, dirname])
