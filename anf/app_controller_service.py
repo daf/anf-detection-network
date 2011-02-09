@@ -257,20 +257,30 @@ class AppControllerService(ServiceProcess):
                                  'sqlt_vars' : ssinfo['conf']['sqlt_vars'] } )
 
         if DEBUG_WRITE_PROV_JSON:
-            print json.dumps(conf)
             f = open('/tmp/prov.json', 'w')
-            json.dump(conf, f)
+            json.dump(conf, f, indent=1)
             f.close()
+            log.debug("Wrote /tmp/prov.json due to DEBUG_WRITE_PROV_JSON being on in the config.")
 
-            # merge and write individual worker configs while we're at it
-            for (wid, winfo) in self.workers.items():
-                wdict = { 'agent_args': { 'opunit_id' : wid,
-                                          'sqlstreams': str(conf['unique_instances'][wid]['sqlstreams']),   # TODO: unstringify this
-                                          'sqlt_vars' : self.prov_vars['sqlt_vars'] } }
+            for (wid, winfo) in conf['unique_instances'].items():
+                wdict = winfo.copy()
+                wdict['agent_args']['opunit_id'] = wid
 
                 f = open('/tmp/sa-' + wid + '.json', 'w')
                 json.dump(wdict, f, indent=1)
                 f.close()
+
+                log.debug("Wrote /tmp/sa-%s.json." % wid)
+
+            # merge and write individual worker configs while we're at it
+            #for (wid, winfo) in self.workers.items():
+            #    wdict = { 'agent_args': { 'opunit_id' : wid,
+            #                              'sqlstreams': str(conf['unique_instances'][wid]['sqlstreams']),   # TODO: unstringify this
+            #                              'sqlt_vars' : self.prov_vars['sqlt_vars'] } }
+
+            #    f = open('/tmp/sa-' + wid + '.json', 'w')
+            #    json.dump(wdict, f, indent=1)
+            #    f.close()
 
         self.epu_controller_client.reconfigure(json.dumps(conf))
 
