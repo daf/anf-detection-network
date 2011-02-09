@@ -71,11 +71,12 @@ class SSFSMFactory(object):
         sdpport     = target.sqlstreams[ssid]['sdpport']
         hsqldbport  = target.sqlstreams[ssid]['hsqldbport']
         dirname     = target.sqlstreams[ssid]['dirname']
+        seismic_jar = resource_filename(__name__, "data/ucsd-seismic.jar")
         installerbin= resource_filename(__name__, "data/install_sqlstream.sh")
         log.debug(installerbin)
 
         # 1. INIT <-> INSTALLED
-        proc_installer  = OSProcess(binary=installerbin, spawnargs=[sdpport, hsqldbport, dirname])
+        proc_installer  = OSProcess(binary=installerbin, spawnargs=[sdpport, hsqldbport, seismic_jar, dirname])
         forward_task    = proc_installer.spawn
         backward_task   = lambda: shutil.rmtree(dirname)
 

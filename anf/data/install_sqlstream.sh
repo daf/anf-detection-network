@@ -5,11 +5,13 @@
 # Install SQLstream script
 # Dave Foster <dfoster@asascience.com>
 # Initial 7 Dec 2010
+#
+# Usage:
+# install_sqlstream.sh <SDP Port> <HSQLDB Port> <Path to seismic jar> <optional install dir>
+#
 
-SS_INSTALLER_BIN="/home/daf/Downloads/SQLstream-2.5.0RC1-opto-x86_64.bin"
-SS_SEISMIC_JAR="/usr/local/seismic/lib/ucsd-seismic.jar"
-RABBITMQ_JAVA_CLIENT_ZIP="/usr/local/rabbitmq-java-client-bin-1.5.3.zip"
-TEMP_SS_AMQPADAPTER_JAR="/home/daf/Downloads/AmqpAdapter.jar"
+SS_INSTALLER_BIN="$HOME/ooici.supplemental.packages/SQLstream-2.5.0RC1-opto-x86_64.bin"
+RABBITMQ_JAVA_CLIENT_ZIP="$HOME/ooici.supplemental.packages/rabbitmq-java-client-bin-1.5.3.zip"
 
 # ports are specified on the command line
 if [ $# -lt 2 ]; then
@@ -19,6 +21,7 @@ fi
 
 SDPPORT=$1; shift
 HSQLDBPORT=$1; shift
+SS_SEISMIC_JAR=$1; shift
 if [ $# -eq 1 ]; then
     DIRNAME=$1
 else
@@ -100,9 +103,6 @@ RABBITDIR=`dirname $DIRNAME`/${RABBITBASE%.zip}
 if [ ! -d "${RABBITDIR}" ]; then
     unzip $RABBITMQ_JAVA_CLIENT_ZIP -d /tmp >/dev/null
 fi
-
-# TEMP TEMP: copy testing AMQP adapter jar to plugin dir
-cp $TEMP_SS_AMQPADAPTER_JAR $DIRNAME/plugin
 
 # 9. Symlink things in plugin/autocp dir
 AUTOCPDIR=$DIRNAME/plugin/autocp
