@@ -245,12 +245,13 @@ class AppControllerService(ServiceProcess):
         #provvars['sqldefs'] = provvars['sqldefs'].replace("$", "$$")    # escape template vars once so it doesn't get clobbered in provisioner replacement
 
         conf = { 'preserve_n'         : len(self.workers),
-                 PROVISIONER_VARS_KEY : self.prov_vars,
+                 #PROVISIONER_VARS_KEY : self.prov_vars,
                  'unique_instances'   : {} }
 
         for (wid, winfo) in self.workers.items():
-            conf['unique_instances'][wid] = { 'sqlstreams' : [] }
-            ssdefs = conf['unique_instances'][wid]['sqlstreams']
+            conf['unique_instances'][wid] = { 'agent_args': { 'sqlstreams' : [] } }
+            conf['unique_instances'][wid]['agent_args'].update(self.prov_vars)
+            ssdefs = conf['unique_instances'][wid]['agent_args']['sqlstreams']
             for (ssid, ssinfo) in winfo['sqlstreams'].items():
                 ssdefs.append( { 'ssid'      : ssinfo['conf']['ssid'],
                                  'sqlt_vars' : ssinfo['conf']['sqlt_vars'] } )
@@ -271,7 +272,7 @@ class AppControllerService(ServiceProcess):
                 json.dump(wdict, f, indent=1)
                 f.close()
 
-        self.epu_controller_client.reconfigure(conf)
+        self.epu_controller_client.reconfigure(json.dumps(conf))
 
     def has_station_binding(self, station_name):
         """
