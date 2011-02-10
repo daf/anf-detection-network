@@ -20,7 +20,7 @@ log = ion.util.ionlog.getLogger(__name__)
 
 from twisted.internet import defer, reactor
 
-from ion.core.process.process import Process
+from ion.core.process.process import Process, ProcessFactory
 from ion.util.async_fsm import AsyncFSM
 from ion.util.state_object import BasicStates
 from ion.services.coi.attributestore import AttributeStoreClient
@@ -607,4 +607,6 @@ class OSSSServerProcess(OSProcess):
 
         OSProcess.processEnded(self, reason)
 
+# Spawn of the process using the module name
+factory = ProcessFactory(AppAgent)
 
