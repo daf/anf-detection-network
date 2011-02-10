@@ -282,7 +282,7 @@ class AppControllerService(ServiceProcess):
             #    json.dump(wdict, f, indent=1)
             #    f.close()
 
-        self.epu_controller_client.reconfigure(json.dumps(conf))
+        self.epu_controller_client.reconfigure(conf)
 
     def has_station_binding(self, station_name):
         """
