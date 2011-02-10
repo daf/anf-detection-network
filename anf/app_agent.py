@@ -140,12 +140,10 @@ class AppAgent(Process):
         if not isinstance(self.spawn_args, dict):
             self.spawn_args = {}
 
-        if self.spawn_args.has_key("agent_args"):
-            agent_args = self.spawn_args["agent_args"]
-        else:
-            agent_args = {}
+        if self.spawn_args.has_key("agent_args") and not isinstance(self.spawn_args["agent_args"], dict):
+            self.spawn_args["agent_args"] = {}
 
-        self._opunit_id = agent_args.get("opunit_id", str(uuid.uuid4())[:8]) # if one didn't get assigned, make one up to report in to the app controller
+        self._opunit_id = self.spawn_args["agent_args"].get("opunit_id", str(uuid.uuid4())[:8]) # if one didn't get assigned, make one up to report in to the app controller
 
         self.metrics = { 'cores' : self._get_cores() }
         self.sqlstreams = {}
