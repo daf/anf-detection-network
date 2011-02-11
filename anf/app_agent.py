@@ -95,7 +95,7 @@ class SSFSMFactory(object):
         fsm.add_transition(SSStates.E_STOPDAEMON, SSStates.S_READY, backward_task, SSStates.S_INSTALLED)
 
         # 3. READY <-> DEFINED
-        proc_loaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=target.sqlstreams[ssid]['sql_defs'], binroot=dirname)
+        proc_loaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=target.sqlstreams[ssid]['_sql_defs'], binroot=dirname)
         forward_task = proc_loaddefs.spawn
 
         # 18 Jan 2011 - Disabled due to lack of ability to turn consumer off - will freeze sqllineClient
@@ -388,7 +388,7 @@ class AppAgent(Process):
                                  'sdpport'      : sdpport,
                                  'inp_queue'    : inp_queue,
                                  'dirname'      : dirname,
-                                 'sql_defs'     : sql_defs,
+                                 '_sql_defs'    : sql_defs,
                                  '_task_chain'  : chain}
 
         fsm = self._fsm_factory_class().create_fsm(self, ssid)
