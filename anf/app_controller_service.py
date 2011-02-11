@@ -7,7 +7,7 @@
 """
 
 import os, uuid
-from twisted.internet import defer
+from twisted.internet import defer, reactor
 from pkg_resources import resource_stream
 
 try:
@@ -63,6 +63,9 @@ class AppControllerService(ServiceProcess):
         exchcnfg = self.container.exchange_manager.exchange_space.exchange
         msgcnfg = messaging.worker('temp')
 
+        # for reconfigure events
+        self._reconfigure_timeout = None
+
         # provisioner vars are common vars for all worker instances
         self.prov_vars = { 'sqlt_vars' : { 'inp_exchange'           : INP_EXCHANGE_NAME,
                                            'inp_exchange_type'      : exchcnfg.exchange_type,
@@ -105,6 +108,7 @@ class AppControllerService(ServiceProcess):
         self.attribute_store_client = AttributeStoreClient()
         yield self._load_sql_def()
 
+    @defer.inlineCallbacks
     def _recv_announce(self, data, msg):
         """
         Received an instrument announcement. Set up a binding for it.
@@ -119,9 +123,9 @@ class AppControllerService(ServiceProcess):
         if found:
             log.error("Duplicate announcement")
         else:
-            self.bind_station(station_name)
+            yield self.bind_station(station_name)
 
-        msg.ack()
+        yield msg.ack()
 
     #def _recv_data(self, data, msg):
     #    #log.info("<-- data packet" + msg.headers.__str__())
@@ -229,9 +233,27 @@ class AppControllerService(ServiceProcess):
         if direct_request == True:
             self._start_sqlstream(op_unit_id, stream_conf)
         else:
-            self.request_reconfigure()
+            self.request_reconfigure() # schedule a reconfigure event!
 
     def request_reconfigure(self):
+        """
+        Rate limiter for actual request reconfigure call.
+        Waits 4 seconds for any more reconfigure attempts, each of which delays the call by another 4 seconds.
+        When the timeout finally calls, the real reconfigure is sent.
+        """
+        if self._reconfigure_timeout != None and self._reconfigure_timeout.active():
+            log.info("request_reconfigure: delay already active, resetting to 4 seconds")
+            self._reconfigure_timeout.reset(4)
+        else:
+            def callReconfigure():
+                log.info("request_reconfigure: delay complete, actually performing reconfigure")
+                self._reconfigure_timeout = None
+                self._request_reconfigure()
+
+            log.info("request_reconfigure: starting delay to 4 seconds to prevent flooding EPU controller")
+            self._reconfigure_timeout = reactor.callLater(4, callReconfigure)
+
+    def _request_reconfigure(self):
         """
         Requests a reconfiguration from the Decision Engine. This takes care of provisioning
         workers.
