@@ -6,6 +6,9 @@
 @brief Support classes for ANF.
 """
 
+import os
+from twisted.internet import reactor
+
 import ion.util.ionlog
 log = ion.util.ionlog.getLogger(__name__)
 
@@ -13,6 +16,7 @@ from twisted.internet import defer
 
 from ion.core.messaging import messaging
 from ion.core.messaging.receiver import Receiver
+from ion.util.os_process import OSProcess
 
 class TopicWorkerReceiver(Receiver):
     """
@@ -79,4 +83,55 @@ class DetectionConsumer(TopicWorkerReceiver):
 
         self._detections.append(detdata)
 
+#
+#
+# ########################################################
+#
+#
+
+class EnvOSProcess(OSProcess):
+    """
+    Temporary fixup to OSProcess to allow environment mangling in its spawn method.
+    """
+
+    def __init__(self, extraenv={}, **kwargs):
+        OSProcess.__init__(self, **kwargs)
+        self._extraenv = extraenv
+
+    def spawn(self, binary=None, args=[]):
+        """
+        Spawns an OS process via twisted's reactor.
+
+        @returns    A deferred that is called back on process ending.
+                    WARNING: it is not safe to yield on this deferred as the process
+                    may never terminate! Use the close method to safely close a
+                    process. You may yield on the deferred returned by that.
+        """
+        if self.used:
+            raise RuntimeError("Already used this process protocol")
+
+        if binary == None:
+            binary = self.binary
+
+        if binary == None:
+            log.error("No binary specified")
+            raise RuntimeError("No binary specified")
+
+        theargs = [binary]
+
+        # arguments passed in here always take precedence.
+        if len(args) == 0:
+            theargs.extend(self.spawnargs)
+        else:
+            theargs.extend(args)
+
+        # adjust env
+        env = os.environ.copy()
+        env.update(self._extraenv)
+
+        log.debug("EnvOSProcess::spawn %s %s" % (str(binary), " ".join(theargs)))
+        reactor.spawnProcess(self, binary, theargs, env=env)
+        self.used = True
+
+        return self.deferred_exited
 

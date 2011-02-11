@@ -25,7 +25,8 @@ from ion.util.async_fsm import AsyncFSM
 from ion.util.state_object import BasicStates
 from ion.services.coi.attributestore import AttributeStoreClient
 from ion.util.task_chain import TaskChain
-from ion.util.os_process import OSProcess
+#from ion.util.os_process import OSProcess
+from support import EnvOSProcess
 
 from app_controller_service import SSD_BIN, SSC_BIN, SQLTDEFS_KEY, SSD_READY_STRING
 
@@ -76,7 +77,7 @@ class SSFSMFactory(object):
         log.debug(installerbin)
 
         # 1. INIT <-> INSTALLED
-        proc_installer  = OSProcess(binary=installerbin, spawnargs=[sdpport, hsqldbport, seismic_jar, dirname])
+        proc_installer  = EnvOSProcess(binary=installerbin, spawnargs=[sdpport, hsqldbport, seismic_jar, dirname])
         forward_task    = proc_installer.spawn
         backward_task   = lambda: shutil.rmtree(dirname)
 
@@ -84,7 +85,7 @@ class SSFSMFactory(object):
         fsm.add_transition(SSStates.E_UNINSTALL, SSStates.S_INSTALLED, backward_task, SSStates.S_INIT)
 
         # 2. INSTALLED <-> READY
-        proc_server = OSSSServerProcess(binroot=dirname)
+        proc_server = OSSSServerProcess(binroot=dirname, extraenv={"JAVA_HOME": "/usr/local/JDK1.6"})
         proc_server.addCallback(target._sqlstream_ended, sqlstreamid=ssid)
         proc_server.addReadyCallback(target._sqlstream_started, sqlstreamid=ssid)
         target.sqlstreams[ssid]['_serverproc'] = proc_server   # store it here, it still runs
@@ -95,11 +96,11 @@ class SSFSMFactory(object):
         fsm.add_transition(SSStates.E_STOPDAEMON, SSStates.S_READY, backward_task, SSStates.S_INSTALLED)
 
         # 3. READY <-> DEFINED
-        proc_loaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=target.sqlstreams[ssid]['_sql_defs'], binroot=dirname)
+        proc_loaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=target.sqlstreams[ssid]['_sql_defs'], binroot=dirname, extraenv={"JAVA_HOME": "/usr/local/JDK1.6"})
         forward_task = proc_loaddefs.spawn
 
         # 18 Jan 2011 - Disabled due to lack of ability to turn consumer off - will freeze sqllineClient
-        #proc_unloaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands="DROP SCHEMA UCSD CASCADE;", binroot=dirname)
+        #proc_unloaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands="DROP SCHEMA UCSD CASCADE;", binroot=dirname, extraenv={"JAVA_HOME": "/usr/local/JDK1.6"})
         #backward_task = proc_unloaddefs.spawn
         backward_task = lambda: False     # can't do pass here?
 
@@ -107,10 +108,10 @@ class SSFSMFactory(object):
         fsm.add_transition(SSStates.E_UNLOADDEFS, SSStates.S_DEFINED, backward_task, SSStates.S_READY)
 
         # 4. DEFINED <-> RUNNING
-        proc_pumpson = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=target._get_sql_pumps_on(), binroot=dirname)
+        proc_pumpson = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=target._get_sql_pumps_on(), binroot=dirname, extraenv={"JAVA_HOME": "/usr/local/JDK1.6"})
         forward_task = proc_pumpson.spawn
 
-        proc_pumpsoff = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=target._get_sql_pumps_off(), binroot=dirname)
+        proc_pumpsoff = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=target._get_sql_pumps_off(), binroot=dirname, extraenv={"JAVA_HOME": "/usr/local/JDK1.6"})
         backward_task = proc_pumpsoff.spawn
 
         fsm.add_transition(SSStates.E_PUMPSON, SSStates.S_DEFINED, forward_task, SSStates.S_RUNNING)
@@ -465,24 +466,25 @@ class AppAgent(Process):
 #
 #
 
-class OSSSClientProcess(OSProcess):
+class OSSSClientProcess(EnvOSProcess):
     """
     SQLStream client process protocol.
     Upon construction, looks for a sqlcommands keyword argument. If that parameter exists,
     it will execute the commands upon launching the client process.
     """
-    def __init__(self, binary=None, spawnargs=[], **kwargs):
+    def __init__(self, binroot=None, sqlcommands=None, **kwargs):
         """
         @param sqlcommands  SQL commands to run in the client. May be None, which leaves stdin open.
         @param binroot      Root path to prepend on the binary name.
         """
-        self.sqlcommands = kwargs.pop('sqlcommands', None)
-        binroot = kwargs.pop("binroot", None)
+        self.sqlcommands = sqlcommands
 
         if binroot != None:
             binary = os.path.join(binroot, SSC_BIN)
+        else:
+            binary=None
 
-        OSProcess.__init__(self, binary=binary, spawnargs=spawnargs, **kwargs)
+        EnvOSProcess.__init__(self, binary=binary, **kwargs)
 
         self.temp_file  = None
 
@@ -509,10 +511,10 @@ class OSSSClientProcess(OSProcess):
 
             newargs.insert(0, "--run=%s" % self.temp_file)
 
-        return OSProcess.spawn(self, binary, newargs)
+        return EnvOSProcess.spawn(self, binary, newargs)
 
     def processEnded(self, reason):
-        OSProcess.processEnded(self, reason)
+        EnvOSProcess.processEnded(self, reason)
 
         # remove temp file if we created one earlier
         if self.temp_file != None:
@@ -524,7 +526,7 @@ class OSSSClientProcess(OSProcess):
 #
 #
 
-class OSSSServerProcess(OSProcess):
+class OSSSServerProcess(EnvOSProcess):
     """
     OSProcess for starting a SQLstream daemon.
     
@@ -534,14 +536,14 @@ class OSSSServerProcess(OSProcess):
     callbacks to it using the addCallback method. This override is so it can be used in a
     TaskChain.
     """
-    def __init__(self, binary=None, spawnargs=[], **kwargs):
-
-        binroot = kwargs.pop("binroot", None)
+    def __init__(self, binroot=None, **kwargs):
 
         if binroot != None:
             binary = os.path.join(binroot, SSD_BIN)
+        else:
+            binary = None
 
-        OSProcess.__init__(self, binary=binary, spawnargs=spawnargs, **kwargs)
+        EnvOSProcess.__init__(self, binary=binary, **kwargs)
         self.ready_deferred = defer.Deferred()
 
     def spawn(self, binary=None, args=[]):
@@ -551,7 +553,7 @@ class OSSSServerProcess(OSProcess):
         Then it can be used in a chain.
         """
 
-        OSProcess.spawn(self, binary, args)
+        EnvOSProcess.spawn(self, binary, args)
 
         return self.ready_deferred
 
@@ -567,7 +569,7 @@ class OSSSServerProcess(OSProcess):
         Shut down the SQLstream daemon.
         This override exists simply to change the timeout param's default value.
         """
-        return OSProcess.close(self, force, timeout)
+        return EnvOSProcess.close(self, force, timeout)
 
     def _close_impl(self, force):
         """
@@ -584,7 +586,7 @@ class OSSSServerProcess(OSProcess):
             self.transport.write('!kill\n')
 
     def outReceived(self, data):
-        OSProcess.outReceived(self, data)
+        EnvOSProcess.outReceived(self, data)
         if (SSD_READY_STRING in data):
 
             # must simulate processEnded callback value
@@ -607,7 +609,7 @@ class OSSSServerProcess(OSProcess):
 
             self.ready_deferred.callback(cba)
 
-        OSProcess.processEnded(self, reason)
+        EnvOSProcess.processEnded(self, reason)
 
 # Spawn of the process using the module name
 factory = ProcessFactory(AppAgent)
