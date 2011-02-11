@@ -158,7 +158,7 @@ class AppAgent(Process):
         # check spawn args for sqlstreams, start them up as appropriate
         # expect a stringify'd python array of dicts
         if self.spawn_args.has_key('agent_args') and self.spawn_args['agent_args'].has_key('sqlstreams'):
-            sqlstreams = eval(self.spawn_args['agent_args']['sqlstreams'])        # TODO: unstringify this
+            sqlstreams = self.spawn_args['agent_args']['sqlstreams']
 
             for ssinfo in sqlstreams:
                 ssid = ssinfo['ssid']
