@@ -66,15 +66,15 @@ class AppControllerService(ServiceProcess):
         # provisioner vars are common vars for all worker instances
         self.prov_vars = { 'sqlt_vars' : { 'inp_exchange'           : INP_EXCHANGE_NAME,
                                            'inp_exchange_type'      : exchcnfg.exchange_type,
-                                           'inp_exchange_durable'   : exchcnfg.durable,
-                                           'inp_exchange_autodelete': exchcnfg.auto_delete,
+                                           'inp_exchange_durable'   : str(exchcnfg.durable).lower(),
+                                           'inp_exchange_autodelete': str(exchcnfg.auto_delete).lower(),
                                            'inp_queue_durable'      : msgcnfg['durable'],
                                            'inp_queue_autodelete'   : msgcnfg['auto_delete'],
                                            'det_topic'              : DETECTION_TOPIC,
                                            'det_exchange'           : OUT_EXCHANGE_NAME,
                                            'det_exchange_type'      : exchcnfg.exchange_type,
-                                           'det_exchange_durable'   : exchcnfg.durable,
-                                           'det_exchange_autodelete': exchcnfg.auto_delete } }
+                                           'det_exchange_durable'   : str(exchcnfg.durable).lower(),
+                                           'det_exchange_autodelete': str(exchcnfg.auto_delete).lower() } }
 
     @defer.inlineCallbacks
     def slc_init(self):
