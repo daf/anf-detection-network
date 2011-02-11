@@ -12,6 +12,7 @@
 
 SS_INSTALLER_BIN="$HOME/ooici.supplemental.packages/SQLstream-2.5.0RC1-opto-x86_64.bin"
 RABBITMQ_JAVA_CLIENT_ZIP="$HOME/ooici.supplemental.packages/rabbitmq-java-client-bin-1.5.3.zip"
+TEMP_SS_AMQPADAPTER_JAR="$HOME/ooici.supplemental.packages/AmqpAdapter.jar"
 
 # ports are specified on the command line
 if [ $# -lt 2 ]; then
@@ -103,6 +104,9 @@ RABBITDIR=`dirname $DIRNAME`/${RABBITBASE%.zip}
 if [ ! -d "${RABBITDIR}" ]; then
     unzip $RABBITMQ_JAVA_CLIENT_ZIP -d /tmp >/dev/null
 fi
+
+# TEMP TEMP: copy testing AMQP adapter jar to plugin dir
+cp $TEMP_SS_AMQPADAPTER_JAR $DIRNAME/plugin
 
 # 9. Symlink things in plugin/autocp dir
 AUTOCPDIR=$DIRNAME/plugin/autocp
