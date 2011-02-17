@@ -6,7 +6,7 @@
 @brief Application Controller for load balancing
 """
 
-import os, uuid
+import os, uuid, time
 from twisted.internet import defer, reactor
 from pkg_resources import resource_stream
 
@@ -62,6 +62,9 @@ class AppControllerService(ServiceProcess):
         # get configs for current exchange setup from exchange space, queues as per what TopicWorkerReceiver (below) uses
         exchcnfg = self.container.exchange_manager.exchange_space.exchange
         msgcnfg = messaging.worker('temp')
+
+        # for timing
+        self._timer = time.time()
 
         # for reconfigure events
         self._reconfigure_timeout = None
@@ -306,6 +309,9 @@ class AppControllerService(ServiceProcess):
 
         self.epu_controller_client.reconfigure(conf)
 
+        # record the time we sent this
+        self._timer = time.time()
+
     def has_station_binding(self, station_name):
         """
         Returns true if we know about this station.
@@ -350,7 +356,10 @@ class AppControllerService(ServiceProcess):
         for ssid, sinfo in sqlstreams.items():
             sstext += "(id: %s status: %s queue: %s)" % (ssid, sinfo['state'], sinfo['inp_queue'])
 
-        log.info("Op Unit (%s) status update: state (%s), sqlstreams (%d): %s" % (opunit_id, state, len(sqlstreams), sstext))
+        # get amount of time since we requested opunits
+        timediff = time.time() - self._timer
+
+        log.info("Op Unit (%s) status update (+%s sec) : state (%s), sqlstreams (%d): %s" % (opunit_id, str(timediff), state, len(sqlstreams), sstext))
 
         if not self.workers.has_key(status['id']):
             self.workers[status['id']] = {}
@@ -359,6 +368,11 @@ class AppControllerService(ServiceProcess):
                                         'state': state,
                                         'proc_id': proc_id,
                                         'sqlstreams':sqlstreams})
+
+        # display a message if all known opunits are running
+        allstate = [ssinfo.get('state', None) for ssinfo in [winfo['sqlstreams'] for winfo in self.workers.values() if len(winfo['sqlstreams'])> 0]]
+        if set(allstate) == set(["SUCCESS"]):
+            log.info("All known workers are running (+%s sec)" % timediff)
 
     def _start_sqlstream(self, op_unit_id, conf):
         """
