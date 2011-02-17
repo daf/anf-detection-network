@@ -6,7 +6,7 @@
 @brief Application Agent to listen to requests from the Application Controller.
 """
 
-import os, string, tempfile, shutil, uuid
+import os, string, tempfile, shutil, uuid, time
 from pkg_resources import resource_filename
 
 try:
@@ -150,14 +150,19 @@ class AppAgent(Process):
         self.sqlstreams = {}
         self._fsm_factory_class = kwargs.pop("fsm_factory", SSFSMFactory)
 
+        # for time metrics
+        self._timer = time.time()
+
     @defer.inlineCallbacks
     def plc_init(self):
         self.target = self.get_scoped_name('system', "app_controller")
 
         self.attribute_store_client = AttributeStoreClient()
 
+        # take note of time
+        self._timer = time.time()
+
         # check spawn args for sqlstreams, start them up as appropriate
-        # expect a stringify'd python array of dicts
         if self.spawn_args.has_key('agent_args') and self.spawn_args['agent_args'].has_key('sqlstreams'):
             sqlstreams = self.spawn_args['agent_args']['sqlstreams']
 
@@ -171,6 +176,7 @@ class AppAgent(Process):
         # let controller know we're starting and have some sqlstreams starting, possibly
         # we call later in order to let it transition out of init state
         reactor.callLater(0, self.opunit_status)
+
 
     @defer.inlineCallbacks
     def plc_terminate(self):
@@ -407,12 +413,20 @@ class AppAgent(Process):
         return chaindef
 
     def _sqlstream_start_chain_success(self, result, **kwargs):
+        """
+        Indicates an entire SQLstream has been started and is consuming from a work queue.
+        Also provides a timing metric when all known SQLstreams start.
+        """
         ssid = kwargs.get("sqlstreamid")
         log.info("SQLstream (%s) started" % ssid)
 
         self.sqlstreams[ssid].pop('_task_chain')    # remove ref to chain
 
         self.opunit_status() # report
+
+        allstate = [sinfo['_fsm'].current_state for sinfo in self.sqlstreams.values() if sinfo.has_key('_fsm')]
+        if set(allstate) == set([SSStates.S_RUNNING]):
+            log.info("All known SQLstream instances started (+%s)" % time.time() - self._timer)
 
     def _sqlstream_start_chain_failure(self, failure, **kwargs):
         ssid = kwargs.get("sqlstreamid")
