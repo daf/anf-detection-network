@@ -154,7 +154,7 @@ class AppControllerService(ServiceProcess):
                     queue_name = queues
                     break
 
-        binding_key = 'ta.%s' % station_name
+        binding_key = '%s' % station_name
 
         yield self._create_queue(queue_name, binding_key)
 
