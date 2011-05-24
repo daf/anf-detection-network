@@ -33,7 +33,7 @@ setupdict['packages'] = find_packages()
 setupdict['dependency_links'] = ['http://ooici.net/packages']
 #setupdict['test_suite'] = 'anf'
 
-setupdict['install_requires'] = ['ioncore==0.4.3']
+setupdict['install_requires'] = ['ioncore']
 
 setupdict['include_package_data'] = True
 setupdict['package_data'] =  {
