@@ -24,7 +24,7 @@ from ion.core.process.process import ProcessFactory
 from ion.core.process.service_process import ServiceProcess
 from ion.services.coi.attributestore import AttributeStoreClient
 from ion.core.messaging import messaging
-from ion.services.cei.epucontroller import PROVISIONER_VARS_KEY
+#from epu.epucontroller import PROVISIONER_VARS_KEY
 from epu.ionproc.epu_controller_client import EPUControllerClient
 
 from support import TopicWorkerReceiver
@@ -106,9 +106,9 @@ class AppControllerService(ServiceProcess):
         #yield self.all_data_recv.initialize()
         #self.counter = 0
 
-        self.epu_controller_client = EPUControllerClient()
+        self.epu_controller_client = EPUControllerClient(proc=self)
 
-        self.attribute_store_client = AttributeStoreClient()
+        self.attribute_store_client = AttributeStoreClient(proc=self)
         yield self._load_sql_def()
 
     @defer.inlineCallbacks
