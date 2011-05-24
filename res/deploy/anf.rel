@@ -1,0 +1,11 @@
+{
+    "type":"release",
+    "name":"ANFRel",
+    "version": "0.1",
+    "description": "ANF (app controller service) deployment file",
+    "ioncore" : "0.1",
+    "apps":[
+        {'name':'attributestore',    'version':'0.1', 'config':{}},
+        {'name':'anf',               'version':'0.1', 'config':{}},
+    ]
+}
