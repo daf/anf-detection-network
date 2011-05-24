@@ -25,7 +25,7 @@ from ion.core.process.service_process import ServiceProcess
 from ion.services.coi.attributestore import AttributeStoreClient
 from ion.core.messaging import messaging
 from ion.services.cei.epucontroller import PROVISIONER_VARS_KEY
-from ion.services.cei.epu_reconfigure import EPUControllerClient
+from epu.ionproc.epu_controller_client import EPUControllerClient
 
 from support import TopicWorkerReceiver
 
