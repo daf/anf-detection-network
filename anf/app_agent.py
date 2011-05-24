@@ -30,6 +30,9 @@ from support import EnvOSProcess
 
 from app_controller_service import SSD_BIN, SSC_BIN, SQLTDEFS_KEY, SSD_READY_STRING
 
+from ion.core import ioninit
+CONF = ioninit.config(__name__)
+
 class SSStates(object):
     """
     States for SQLstream instances.
@@ -143,6 +146,10 @@ class AppAgent(Process):
 
         if not self.spawn_args.has_key("agent_args") or (self.spawn_args.has_key("agent_args") and not isinstance(self.spawn_args["agent_args"], dict)):
             self.spawn_args["agent_args"] = {}
+
+        # we now pass in agent_args via a configuration param
+        cagentargs = CONF.getValue('agent_args', {})
+        self.spawn_args["agent_args"].update(cagentargs)
 
         self._opunit_id = self.spawn_args["agent_args"].get("opunit_id", str(uuid.uuid4())[:8]) # if one didn't get assigned, make one up to report in to the app controller
 
